@@ -2,13 +2,18 @@ using System.Windows.Forms;
 
 namespace PoeRumours;
 
-// Wires the scanner to the overlay. The overlay is dumb: it renders what the core decided and holds no state
-// of its own beyond which buttons exist.
-internal sealed class App : IDisposable
+// The application itself. It lives in the tray (R1) and owns everything: the scan loop, the overlay, the menu.
+//
+// It is an ApplicationContext rather than a main form on purpose. The overlay comes and goes with the Atlas —
+// tying the process's lifetime to it would kill the app the first time the player closed the map, and the
+// whole point of a tray app is that it is simply always there. So nothing but "Exit" ends the process.
+internal sealed class App : ApplicationContext
 {
+    private readonly RumourBook _book;
     private readonly AppConfig _config;
     private readonly OverlayForm _overlay;
     private readonly ScanLoop _loop;
+    private readonly NotifyIcon _tray;
     private readonly CancellationTokenSource _cts = new();
 
     // Set by the ✕. Kept until the Atlas closes, so the scan loop's next pass does not simply put the overlay
@@ -17,32 +22,63 @@ internal sealed class App : IDisposable
 
     public App(RumourBook book, AppConfig config, OcrReader ocr)
     {
+        _book = book;
         _config = config;
         _overlay = new OverlayForm(config);
         _loop = new ScanLoop(book, config.Language, new GdiScreenCapture(), ocr);
 
         _overlay.CloseRequested += () => { _dismissed = true; _overlay.HideOverlay(); };
-        _overlay.ResetRequested += () => { _loop.ResetPool(); _overlay.Update(new PoolSnapshot([], 0, 0)); };
+        _overlay.ResetRequested += ResetPool;
 
         _loop.Updated += OnScan;
         _loop.Diagnostic += Log;
+
+        var menu = new ContextMenuStrip();
+        menu.Items.Add("Show overlay", null, (_, _) => { _dismissed = false; });
+        menu.Items.Add("Reset pool", null, (_, _) => ResetPool());
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Settings…", null, (_, _) => ShowSettings());
+        menu.Items.Add("Exit", null, (_, _) => Exit());
+
+        _tray = new NotifyIcon
+        {
+            Icon = AppIcon.Tray(),
+            Text = $"PoE Rumours {AppVersion.Current}",
+            Visible = true,
+            ContextMenuStrip = menu,
+        };
+        _tray.DoubleClick += (_, _) => ShowSettings();
+
+        _ = _loop.RunAsync(_cts.Token);
     }
 
-    // The scanner is the only part of this app that can be wrong in a way the player cannot see: a rumour the
-    // OCR garbled past recognition is simply absent from the list, and an absent rumour looks exactly like a
-    // rumour the tile does not have. So every sample — including the rows that resolved to nothing, which the
-    // loop reports as "?<raw ocr text>" — goes to a file. Without it, "it didn't show X" is unfalsifiable.
-    private static readonly string LogPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PoeRumours", "scan.log");
-
-    private static void Log(string line)
+    private void ResetPool()
     {
-        try
+        _loop.ResetPool();
+        _overlay.Update(new PoolSnapshot([], 0, 0));
+    }
+
+    private void ShowSettings()
+    {
+        using var dlg = new SettingsForm(_config, _book.Locales);
+        dlg.ShowDialog();
+
+        // The locale is baked into the OCR engine and the scan loop when they are constructed, and swapping
+        // them out live means tearing down a running loop mid-tick. Restarting the process is one line, cannot
+        // leave a half-switched state, and re-runs the startup check that fails loudly if the new language has
+        // no recogniser installed (R3).
+        if (dlg.LanguageChanged)
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
-            File.AppendAllText(LogPath, $"[{DateTime.Now:HH:mm:ss}] {line}{Environment.NewLine}");
+            _tray.Visible = false;      // or the dead icon lingers in the tray until it is hovered
+            Application.Restart();
         }
-        catch { /* logging must never take the app down mid-game */ }
+    }
+
+    private void Exit()
+    {
+        _tray.Visible = false;
+        _cts.Cancel();
+        ExitThread();
     }
 
     private void OnScan(ScanState st)
@@ -72,16 +108,32 @@ internal sealed class App : IDisposable
         _overlay.ShowOverlay();
     }
 
-    public void Run()
+    // The scanner is the only part of this app that can be wrong in a way the player cannot see: a rumour the
+    // OCR garbled past recognition is simply absent from the list, and an absent rumour looks exactly like a
+    // rumour the tile does not have. So every sample — including the rows that resolved to nothing, which the
+    // loop reports as "?<raw ocr text>" — goes to a file. Without it, "it didn't show X" is unfalsifiable.
+    private static readonly string LogPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PoeRumours", "scan.log");
+
+    private static void Log(string line)
     {
-        _ = _loop.RunAsync(_cts.Token);
-        Application.Run(_overlay);
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
+            File.AppendAllText(LogPath, $"[{DateTime.Now:HH:mm:ss}] {line}{Environment.NewLine}");
+        }
+        catch { /* logging must never take the app down mid-game */ }
     }
 
-    public void Dispose()
+    protected override void Dispose(bool disposing)
     {
-        _cts.Cancel();
-        _overlay.Dispose();
-        _cts.Dispose();
+        if (disposing)
+        {
+            _cts.Cancel();
+            _tray.Dispose();
+            _overlay.Dispose();
+            _cts.Dispose();
+        }
+        base.Dispose(disposing);
     }
 }

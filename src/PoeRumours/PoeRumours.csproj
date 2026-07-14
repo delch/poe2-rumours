@@ -13,7 +13,15 @@
     <AssemblyTitle>PoE Rumours</AssemblyTitle>
     <Description>Atlas overlay for Path of Exile 2 that accumulates an Uncharted Waters tile's full rumour pool across saga toggles and counts its Grand Expeditions.</Description>
     <Version>0.1.0</Version>
+    <ApplicationIcon>../../media/app.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <!-- The same .ico is also embedded, because the tray needs to pick a specific SIZE out of it. Pulling the
+       icon off the exe (ExtractAssociatedIcon) always hands back 32px, which Windows then squashes to 16 —
+       that is precisely the mush the hand-drawn small entries exist to avoid. -->
+  <ItemGroup>
+    <EmbeddedResource Include="../../media/app.ico" LogicalName="app.ico" />
+  </ItemGroup>
 
   <!-- The data lives at the repo root (data/), not next to the sources: it is edited by hand, reviewed as
        data, and is the one part of this project a non-programmer would touch. Copied next to the exe at

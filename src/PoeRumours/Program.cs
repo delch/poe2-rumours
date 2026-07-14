@@ -31,8 +31,9 @@ internal static class Program
             return;
         }
 
+        System.Windows.Forms.Application.EnableVisualStyles();
         using var app = new App(book, config, ocr);
-        app.Run();
+        System.Windows.Forms.Application.Run(app);
     }
 }
 

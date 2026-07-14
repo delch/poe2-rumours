@@ -21,15 +21,6 @@ internal sealed class OverlayForm : Form
 
     public event Action? ResetRequested;
     public event Action? CloseRequested;
-    public event Action<bool>? LockChanged;
-
-    private bool _locked;
-    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
-    public bool Locked
-    {
-        get => _locked;
-        set { _locked = value; Rerender(); }
-    }
 
     private readonly Font _nameFont = new("Segoe UI", 11, FontStyle.Bold);
     private readonly Font _cellFont = new("Segoe UI", 10);
@@ -44,7 +35,7 @@ internal sealed class OverlayForm : Form
     private const int BtnW = 22;
 
     // Button boxes, in WINDOW coordinates (the window is the plate, so there is no screen-space maths).
-    private Rectangle _closeBtn, _lockBtn, _resetBtn;
+    private Rectangle _closeBtn, _resetBtn;
 
     public OverlayForm(AppConfig config)
     {
@@ -53,7 +44,6 @@ internal sealed class OverlayForm : Form
         ShowInTaskbar = false;
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
-        _locked = config.Locked;
 
         var pos = config.OverlayPosition ?? DefaultCorner();
         Bounds = new Rectangle(pos.X, pos.Y, 460, 160);
@@ -104,7 +94,7 @@ internal sealed class OverlayForm : Form
             int sy = unchecked((short)((long)m.LParam >> 16));
             var p = new Point(sx - Bounds.Left, sy - Bounds.Top);   // -> window coords
 
-            if (_closeBtn.Contains(p) || _lockBtn.Contains(p) || _resetBtn.Contains(p))
+            if (_closeBtn.Contains(p) || _resetBtn.Contains(p))
                 m.Result = HTCLIENT;                 // the buttons must catch the mouse
             else if (p.Y < HeaderH)
                 m.Result = HTCAPTION;                // grab handle: Windows drags the window for us
@@ -127,14 +117,6 @@ internal sealed class OverlayForm : Form
     {
         if (_closeBtn.Contains(e.Location)) CloseRequested?.Invoke();
         else if (_resetBtn.Contains(e.Location)) ResetRequested?.Invoke();
-        else if (_lockBtn.Contains(e.Location))
-        {
-            _locked = !_locked;
-            _config.Locked = _locked;
-            _config.Save();
-            LockChanged?.Invoke(_locked);
-            Rerender();
-        }
     }
 
     public void Update(PoolSnapshot pool)
@@ -230,11 +212,9 @@ internal sealed class OverlayForm : Form
 
         int bx = w - PadX - BtnW;
         _closeBtn = new Rectangle(bx, 3, BtnW, HeaderH - 6); bx -= BtnW + 4;
-        _lockBtn = new Rectangle(bx, 3, BtnW, HeaderH - 6); bx -= BtnW + 4;
         _resetBtn = new Rectangle(bx, 3, BtnW, HeaderH - 6);
 
         DrawClose(g, _closeBtn);
-        DrawLock(g, _lockBtn, _locked);
         DrawReset(g, _resetBtn);
 
         int y = HeaderH + PadY;
@@ -316,14 +296,6 @@ internal sealed class OverlayForm : Form
         int i = 6;
         g.DrawLine(p, r.Left + i, r.Top + i, r.Right - i, r.Bottom - i);
         g.DrawLine(p, r.Right - i, r.Top + i, r.Left + i, r.Bottom - i);
-    }
-
-    private static void DrawLock(Graphics g, Rectangle r, bool on)
-    {
-        using var p = new Pen(on ? Color.FromArgb(255, 214, 110) : Color.FromArgb(150, 156, 170), 1.6f);
-        var body = new Rectangle(r.Left + 6, r.Top + 9, r.Width - 12, r.Height - 13);
-        g.DrawRectangle(p, body);
-        g.DrawArc(p, body.Left + 2, r.Top + 3, body.Width - 4, 10, 180, 180);
     }
 
     private static void DrawReset(Graphics g, Rectangle r)
