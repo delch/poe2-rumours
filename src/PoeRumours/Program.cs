@@ -13,6 +13,12 @@ internal static class Program
         // debug them with a log than through a UI that might itself be the thing that is broken.
         if (args.Contains("--scan")) { ScanDiagnostic.Run(); return; }
 
+        // Which upscale factor to feed the OCR engine is a MEASUREMENT, never a preference. The engine is not
+        // monotonic in it: it returns nothing at all for the stylised "World" banner at 4x while reading it
+        // cleanly at 3x and 6x, and a factor that rescues the panel's small print can wreck a rumour line that
+        // read fine before. So: hover a tile, run this, and read what each factor actually produces.
+        if (args.Contains("--probe")) { UpscaleProbe.Run(args); return; }
+
         var config = AppConfig.Load();
         RumourBook book;
         OcrReader ocr;
@@ -110,5 +116,63 @@ internal static class ScanDiagnostic
         W("scanning — open the Atlas and hover an Uncharted Waters tile. Ctrl+C or close to stop.");
         using var cts = new CancellationTokenSource();
         loop.RunAsync(cts.Token).GetAwaiter().GetResult();
+    }
+}
+
+// Reads the rumour panel at every upscale factor and reports what each one produced. Run it with the tooltip
+// on screen: `PoeRumours.exe --probe [locale]`.
+//
+// This exists because the factor cannot be reasoned about. The scoreboard it prints — how many rumour lines
+// each factor RESOLVED, not how pretty the text looks — is the only thing that settles it, and it has to be
+// re-run on any machine where the app misbehaves, because the answer depends on how many pixels tall the
+// game's text is there.
+internal static class UpscaleProbe
+{
+    public static void Run(string[] args)
+    {
+        var locale = args.FirstOrDefault(a => a is "en" or "ru") ?? "en";
+        var log = new StreamWriter(File.Create("probe.log")) { AutoFlush = true };
+        void W(string s) { log.WriteLine(s); Console.WriteLine(s); }
+
+        var book = RumourBook.Load(Path.Combine(AppContext.BaseDirectory, "data"));
+        var ocr = new OcrReader(locale);
+        var capture = new GdiScreenCapture();
+        var ui = book.Ui(locale);
+
+        var game = GameWindow.Find();
+        if (game is null) { W("game not running"); return; }
+
+        W($"=== upscale probe | {AppVersion.Current} | locale '{locale}' | OCR '{ocr.RecognizerTag}' " +
+          $"| screen {game.Value.Bounds.Width}x{game.Value.Bounds.Height} ===");
+
+        var rough = PanelDetector.Detect(ocr.Read(capture, game.Value.Bounds, wantScale: 1), ui);
+        if (rough is null) { W("no panel on screen — hover an Uncharted Waters tile and run again"); return; }
+
+        var region = Rectangle.Inflate(rough.Bounds, 48, 48);
+        region.Intersect(game.Value.Bounds);
+        W($"panel at {region.Width}x{region.Height}\n");
+
+        for (int scale = 1; scale <= 6; scale++)
+        {
+            int fitted = ocr.Fit(scale, region.Width, region.Height);
+            if (fitted != scale) { W($"x{scale}: refused — MaxImageDimension clamps it to x{fitted}"); continue; }
+
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var lines = ocr.Read(capture, region, wantScale: scale);
+            long ms = clock.ElapsedMilliseconds;
+
+            var panel = PanelDetector.Detect(lines, ui);
+            if (panel is null) { W($"x{scale}: {ms,4}ms — PANEL NOT FOUND"); continue; }
+
+            var reading = PanelReader.Read(panel.RumourLines, book, locale);
+            int ok = reading.Rows.Count(r => r.Resolved);
+
+            W($"x{scale}: {ms,4}ms — {ok}/{reading.Rows.Count} resolved" +
+              (reading.IsValid ? "" : "  [READING REJECTED]"));
+            foreach (var r in reading.Rows)
+                W($"        {(r.Resolved ? "OK  " : "??  ")}{r.OcrText}   ->  {r.Rumour?.Id ?? "-"}");
+        }
+
+        W("\ndone — probe.log written next to the exe");
     }
 }

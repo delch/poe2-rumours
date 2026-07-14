@@ -50,10 +50,27 @@ internal sealed class OcrReader
     public IReadOnlyList<string> Available { get; } = [];
 
     // Read every line in `region`. Bounds come back in ABSOLUTE SCREEN coordinates, not bitmap coordinates,
-    // so a caller can reason about where things are on screen without knowing what was captured.
-    public IReadOnlyList<TextLine> Read(IScreenCapture capture, Rectangle region)
+    // so a caller can reason about where things are on screen without knowing what was captured — or at what
+    // scale it was read.
+    //
+    // THE IMAGE IS UPSCALED FIRST, and that is not a refinement — it is the difference between working and
+    // not. Windows OCR was trained on documents, and game UI text at native resolution is simply small: on a
+    // 3440x1440 screen ours reads fine, on a smaller one another player's client turned the panel's hint into
+    // "“'Ю-юпьзуйте жмут, чтобы область карту" and its section header vanished entirely. Same engine, same
+    // language pack, same game — different pixel height. Feeding the engine a bigger image is what fixes that,
+    // and it is why the tool this one replaced upscales before every read.
+    //
+    // The factor is not a free parameter. We measured the engine returning NOTHING AT ALL for the stylised
+    // "World" banner at 4x while reading it cleanly at 3x and 6x — so it is neither monotonic nor obvious, and
+    // this number is a measurement, not a preference. And MaxImageDimension (10000 here) is a hard ceiling: a
+    // full-screen 3440x1440 pass cannot go past 2x without being refused outright, so the scale is clamped to
+    // what the region can take.
+    public IReadOnlyList<TextLine> Read(IScreenCapture capture, Rectangle region, int wantScale = 3)
     {
-        using var bmp = capture.Capture(region);
+        using var raw = capture.Capture(region);
+
+        int scale = Fit(wantScale, raw.Width, raw.Height);
+        using var bmp = scale == 1 ? raw : Upscale(raw, scale);
         using var software = ToSoftwareBitmap(bmp);
 
         var result = _engine.RecognizeAsync(software).AsTask().GetAwaiter().GetResult();
@@ -67,11 +84,32 @@ internal sealed class OcrReader
             double r = line.Words.Max(w => w.BoundingRect.Right);
             double b = line.Words.Max(w => w.BoundingRect.Bottom);
 
+            // Back out of the upscale before leaving this method: nothing outside it should have to know.
             lines.Add(new TextLine(line.Text, Rectangle.FromLTRB(
-                region.Left + (int)l, region.Top + (int)t,
-                region.Left + (int)r, region.Top + (int)b)));
+                region.Left + (int)(l / scale), region.Top + (int)(t / scale),
+                region.Left + (int)(r / scale), region.Top + (int)(b / scale))));
         }
         return lines;
+    }
+
+    // The engine refuses an image beyond MaxImageDimension outright, so the wanted scale is only ever a wish.
+    public int Fit(int wantScale, int width, int height)
+    {
+        int max = (int)OcrEngine.MaxImageDimension;
+        int fits = Math.Min(max / Math.Max(1, width), max / Math.Max(1, height));
+        return Math.Clamp(Math.Min(wantScale, fits), 1, wantScale);
+    }
+
+    private static Bitmap Upscale(Bitmap src, int scale)
+    {
+        var big = new Bitmap(src.Width * scale, src.Height * scale, PixelFormat.Format32bppArgb);
+        using var g = Graphics.FromImage(big);
+        // Bicubic, not nearest-neighbour: the engine is looking for smooth glyph shapes, and blocky pixels
+        // read worse than blurry ones.
+        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+        g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+        g.DrawImage(src, 0, 0, big.Width, big.Height);
+        return big;
     }
 
     private static SoftwareBitmap ToSoftwareBitmap(Bitmap bmp)

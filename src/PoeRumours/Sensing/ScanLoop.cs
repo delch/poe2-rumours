@@ -17,6 +17,7 @@ internal sealed class ScanLoop(RumourBook book, string locale, IScreenCapture ca
     private bool _atlasWasOpen;
     private bool _panelWasUp;
     private string _gameName = "";
+    private DateTime _lastTiming = DateTime.MinValue;
 
     public event Action<ScanState>? Updated;
     public event Action<string>? Diagnostic;
@@ -100,7 +101,9 @@ internal sealed class ScanLoop(RumourBook book, string locale, IScreenCapture ca
         }
 
         // Cheap: the Atlas anchors all live in the top band of the viewport.
+        var clock = System.Diagnostics.Stopwatch.StartNew();
         var bandLines = ocr.Read(capture, game.Value.TopBand());
+        long bandMs = clock.ElapsedMilliseconds;
         bool atlasOpen = AtlasGate.IsOpen(bandLines, ui);
 
         // Reading NOTHING at all from the top band is a different failure from reading the wrong words: it is
@@ -128,8 +131,58 @@ internal sealed class ScanLoop(RumourBook book, string locale, IScreenCapture ca
             return closed;
         }
 
-        var screenLines = ocr.Read(capture, game.Value.Bounds);
+        // Two passes, and the split is a measurement, not a preference.
+        //
+        // Upscaling is what makes small UI text readable at all — on a smaller screen than ours another
+        // player's client turned the panel's hint into gibberish and lost its section header entirely, same
+        // engine, same language pack. But upscaling the WHOLE SCREEN costs 700-1060ms per pass here, against a
+        // 400ms tick: the app would spend every waking moment doing OCR, on top of a running game.
+        //
+        // So: find the panel on a cheap 1x full-screen pass — the title is large and survives it — then read
+        // the panel itself, and only it, upscaled. That is a few hundred pixels square instead of 3440x1440,
+        // and the small text that actually matters gets the magnification it needs.
+        clock.Restart();
+        var screenLines = ocr.Read(capture, game.Value.Bounds, wantScale: 1);
+        long screenMs = clock.ElapsedMilliseconds;
+
         var panel = PanelDetector.Detect(screenLines, ui);
+        PanelReading? reading = panel is null ? null : PanelReader.Read(panel.RumourLines, book, locale);
+
+        // The magnified retry, and ONLY when the cheap pass came back unhappy.
+        //
+        // Upscaling is not the free win it looks like. Measured on the panel itself: this machine resolves all
+        // three rumours at 1x, and at 4x the engine LOSES one — it is not monotonic in the factor, exactly as
+        // it was not for the stylised "World" banner (nothing at 4x, clean at 3x and 6x). So a fixed factor is
+        // a bet that goes wrong in both directions: pay 3x the time on a machine that never needed it, and
+        // still read worse.
+        //
+        // Retrying only on a bad reading costs a healthy machine nothing at all, and gives a struggling one —
+        // a smaller screen, smaller text, where the panel's small print dissolves — the magnification it does
+        // need. Take whichever reading is actually better; a retry that reads worse is discarded.
+        long closeMs = 0;
+        if (panel is not null && reading is not null && !IsClean(reading))
+        {
+            clock.Restart();
+            var region = Rectangle.Inflate(panel.Bounds, 48, 48);
+            region.Intersect(game.Value.Bounds);
+
+            var closeLines = ocr.Read(capture, region, wantScale: 3);
+            closeMs = clock.ElapsedMilliseconds;
+
+            var closePanel = PanelDetector.Detect(closeLines, ui);
+            if (closePanel is not null)
+            {
+                var closeReading = PanelReader.Read(closePanel.RumourLines, book, locale);
+                if (Better(closeReading, reading)) { panel = closePanel; reading = closeReading; }
+            }
+        }
+
+        if (DateTime.UtcNow - _lastTiming > TimeSpan.FromSeconds(30))
+        {
+            _lastTiming = DateTime.UtcNow;
+            Diagnostic?.Invoke($"ocr: band {bandMs}ms, screen {screenMs}ms (x1), retry {closeMs}ms (x3), " +
+                               $"tick budget {TickMs}ms");
+        }
 
         // Log every transition, not just samples. A sample is only recorded when the displayed triple CHANGES,
         // so a detector that finds the panel on one tick and loses it on the next looks perfectly healthy in a
@@ -153,9 +206,8 @@ internal sealed class ScanLoop(RumourBook book, string locale, IScreenCapture ca
             Stage("atlas open, panel found");
         }
 
-        if (panel is not null)
+        if (reading is not null)
         {
-            var reading = PanelReader.Read(panel.RumourLines, book, locale);
             if (!reading.IsValid)
             {
                 // 4+ rumour rows: the game never shows that many, so the detector swallowed something outside
@@ -175,5 +227,17 @@ internal sealed class ScanLoop(RumourBook book, string locale, IScreenCapture ca
         var state = new ScanState(true, true, true, panel, _pool.Snapshot());
         Updated?.Invoke(state);
         return state;
+    }
+
+    // Clean = every row is a rumour we know. Anything else — a rejected reading, or a line we could not place
+    // — means the cheap pass may simply not have read well enough, and is worth one magnified retry.
+    private static bool IsClean(PanelReading r) => r.IsValid && r.Rows.All(x => x.Resolved);
+
+    // A retry only wins if it is genuinely better: valid beats invalid, then more resolved rows. Reading WORSE
+    // at a higher magnification is not hypothetical — it is measured (this machine, x4, one rumour lost).
+    private static bool Better(PanelReading candidate, PanelReading current)
+    {
+        if (candidate.IsValid != current.IsValid) return candidate.IsValid;
+        return candidate.Rows.Count(r => r.Resolved) > current.Rows.Count(r => r.Resolved);
     }
 }
