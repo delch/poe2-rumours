@@ -38,7 +38,10 @@ internal sealed class ScanLoop(RumourBook book, string locale, IScreenCapture ca
         }
     }
 
-    private const int TickMs = 700;
+    // Half the wait before the overlay appears was this interval, not the show delay itself: the panel cannot
+    // be noticed sooner than the next scan. Faster ticks cost a full-screen OCR pass more often — but only
+    // while the Atlas is open, since the cheap top-band gate short-circuits everything else.
+    private const int TickMs = 400;
 
     // A log that only records successes is useless for the one report that matters — "it doesn't work". Every
     // stage that can silently return nothing (no game, not foreground, gate shut, no panel) says so, and says

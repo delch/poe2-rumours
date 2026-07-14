@@ -46,6 +46,15 @@
     </Content>
   </ItemGroup>
 
+  <!-- The user-facing readme ships WITH the build, so a rebuilt dist\ cannot quietly lose it. It did once:
+       it lived only in the output folder, and the next publish wiped the folder. -->
+  <ItemGroup Condition="'$(Configuration)' == 'Release'">
+    <Content Include="../../packaging/README.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>README.txt</Link>
+    </Content>
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="PoeRumours.Tests" />
   </ItemGroup>

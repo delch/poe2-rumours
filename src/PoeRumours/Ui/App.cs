@@ -25,7 +25,7 @@ internal sealed class App : ApplicationContext
     // The rumours must sit on screen this long before the plate answers them. Dragging the cursor across the
     // Atlas sweeps the tooltip on and off half a dozen tiles on the way to somewhere else; without this, the
     // overlay would flash at every one of them.
-    private static readonly TimeSpan ShowDelay = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan ShowDelay = TimeSpan.FromMilliseconds(600);
 
     // ...but "on screen" is what the DETECTOR says, and the detector blinks: OCR reads a tooltip on one tick
     // and misses it on the next. Restarting the clock on every blink means the second never elapses and the
