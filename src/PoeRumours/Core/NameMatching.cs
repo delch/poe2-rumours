@@ -63,15 +63,35 @@ internal static class NameMatching
         return prev[b.Length];
     }
 
+    // How well an OCR line matches a KNOWN FIXED PHRASE of the UI (a panel title, a header, "Consumes:").
+    // Unlike a rumour line, a phrase may come back CLIPPED: the Russian client returns "Слухи об" for "Слухи
+    // об острове", which plain similarity scores at 0.54 — low enough to be treated as an unknown rumour and
+    // low enough to hide the whole panel.
+    //
+    // So containment counts, in both directions. MinFragment is what keeps that honest: two or three stray
+    // characters would match anything, but six characters of a panel signature are not something the game's
+    // other text produces by accident.
+    private const int MinFragment = 6;
+
+    public static double PhraseScore(string ocrLine, string phrase)
+    {
+        var a = Skeleton(ocrLine);
+        var b = Skeleton(phrase);
+        if (a.Length == 0 || b.Length == 0) return 0;
+
+        if (a.Contains(b, StringComparison.Ordinal)) return 1.0;               // phrase inside a longer read
+        if (a.Length >= MinFragment && b.Contains(a, StringComparison.Ordinal)) return 0.95;  // clipped read
+        return Similarity(a, b);
+    }
+
     // True if the line is one of the panel's fixed phrases (title, hint, section header, "Consumes:", the
     // item name) rather than a rumour. Fuzzy, because OCR garbles these exactly as badly as it garbles
-    // rumour names.
+    // rumour names — and clips them, which is worse.
     public static bool IsBoilerplate(string ocrLine, UiStrings ui)
     {
-        var skel = Skeleton(ocrLine);
-        if (skel.Length == 0) return true;
+        if (Skeleton(ocrLine).Length == 0) return true;
         foreach (var phrase in ui.Boilerplate)
-            if (Similarity(skel, Skeleton(phrase)) >= 0.75)
+            if (PhraseScore(ocrLine, phrase) >= 0.75)
                 return true;
         return false;
     }

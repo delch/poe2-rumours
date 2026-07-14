@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows.Forms;
 
 namespace PoeRumours;
@@ -47,6 +48,15 @@ internal sealed class App : ApplicationContext
         _loop.Updated += OnScan;
         _loop.Diagnostic += Log;
 
+        RotateLog();
+
+        // Every log starts by saying what it is a log OF. A scan log without the build, the language and the
+        // recogniser that produced it is a puzzle: "no rumours matched" reads identically whether the client is
+        // Russian and the setting says English, or the Russian recogniser was never installed.
+        Log($"=== PoE Rumours {AppVersion.Current} | language '{config.Language}' " +
+            $"| OCR '{ocr.RecognizerTag}' (installed: {string.Join(", ", ocr.Available)}) " +
+            $"| screen {Screen.PrimaryScreen?.Bounds.Width}x{Screen.PrimaryScreen?.Bounds.Height} ===");
+
         var menu = new ContextMenuStrip();
         menu.Items.Add("Show overlay", null, (_, _) => { _dismissed = false; });
         menu.Items.Add("Reset pool", null, (_, _) => ResetPool());
@@ -57,6 +67,8 @@ internal sealed class App : ApplicationContext
             ToolTipText = "Let the overlay into screenshots. Scanning is paused while it is on.",
         };
         menu.Items.Add(_screenshotMode);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Open log", null, (_, _) => OpenLog());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Settings…", null, (_, _) => ShowSettings());
         menu.Items.Add("Exit", null, (_, _) => Exit());
@@ -74,6 +86,22 @@ internal sealed class App : ApplicationContext
     }
 
     private readonly ToolStripMenuItem _screenshotMode;
+
+    // The log is the whole bug report. Asking someone to paste a path into Explorer is asking them not to send
+    // it — so the app opens it for them.
+    private void OpenLog()
+    {
+        try
+        {
+            if (!File.Exists(LogPath)) Log("(log opened before anything was written)");
+            Process.Start(new ProcessStartInfo(LogPath) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Could not open the log.\n\n{LogPath}\n\n{ex.Message}",
+                "PoE Rumours", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
 
     // Debug aid: make the plate visible to screen capture so it turns up in a screenshot.
     //
@@ -175,6 +203,19 @@ internal sealed class App : ApplicationContext
     // loop reports as "?<raw ocr text>" — goes to a file. Without it, "it didn't show X" is unfalsifiable.
     private static readonly string LogPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PoeRumours", "scan.log");
+
+    // Keep one previous run around and start fresh past 2 MB. A log nobody can face opening is a log nobody
+    // sends, and the interesting part of a bug report is always the last session, not the first.
+    private static void RotateLog()
+    {
+        try
+        {
+            if (!File.Exists(LogPath)) return;
+            if (new FileInfo(LogPath).Length < 2 * 1024 * 1024) return;
+            File.Move(LogPath, LogPath + ".old", overwrite: true);
+        }
+        catch { /* never let housekeeping stop the app */ }
+    }
 
     private static void Log(string line)
     {

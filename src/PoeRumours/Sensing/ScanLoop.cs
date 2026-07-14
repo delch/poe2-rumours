@@ -40,14 +40,49 @@ internal sealed class ScanLoop(RumourBook book, string locale, IScreenCapture ca
 
     private const int TickMs = 700;
 
+    // A log that only records successes is useless for the one report that matters — "it doesn't work". Every
+    // stage that can silently return nothing (no game, not foreground, gate shut, no panel) says so, and says
+    // WHAT IT SAW, so a user's log alone is enough to tell a wrong language from a covered anchor from a
+    // fullscreen-exclusive game. Transitions are logged once; the stuck states re-report every ~10s, because
+    // "still nothing, and here is what OCR reads" is the whole diagnosis.
+    private static readonly TimeSpan Nag = TimeSpan.FromSeconds(10);
+    private string _lastStage = "";
+    private DateTime _lastNag = DateTime.MinValue;
+
+    private void Stage(string stage, Func<string>? detail = null)
+    {
+        bool changed = stage != _lastStage;
+        bool due = DateTime.UtcNow - _lastNag > Nag;
+        if (!changed && !due) return;
+
+        _lastStage = stage;
+        _lastNag = DateTime.UtcNow;
+        Diagnostic?.Invoke(detail is null ? stage : $"{stage} — {detail()}");
+    }
+
+    private static string Lines(IEnumerable<TextLine> lines)
+    {
+        var text = lines.Select(l => l.Text.Trim()).Where(t => t.Length > 0).ToList();
+        return text.Count == 0 ? "OCR read NOTHING" : $"OCR read: {string.Join(" | ", text)}";
+    }
+
     public ScanState Tick()
     {
         var ui = book.Ui(locale);
         var game = GameWindow.Find();
 
-        if (game is null || !game.Value.IsForeground)
+        if (game is null)
         {
-            var idle = new ScanState(game is not null, false, false, null, _pool.Snapshot());
+            Stage("game not running (looking for a process named PathOfExile)");
+            var none = new ScanState(false, false, false, null, _pool.Snapshot());
+            Updated?.Invoke(none);
+            return none;
+        }
+
+        if (!game.Value.IsForeground)
+        {
+            Stage("game not in foreground");
+            var idle = new ScanState(true, false, false, null, _pool.Snapshot());
             Updated?.Invoke(idle);
             return idle;
         }
@@ -55,6 +90,13 @@ internal sealed class ScanLoop(RumourBook book, string locale, IScreenCapture ca
         // Cheap: the Atlas anchors all live in the top band of the viewport.
         var bandLines = ocr.Read(capture, game.Value.TopBand());
         bool atlasOpen = AtlasGate.IsOpen(bandLines, ui);
+
+        // Reading NOTHING at all from the top band is a different failure from reading the wrong words: it is
+        // what a fullscreen-exclusive game looks like (capture returns black), and it would otherwise be
+        // indistinguishable from "the Atlas is simply closed".
+        if (!atlasOpen)
+            Stage($"atlas gate shut (locale '{locale}', anchors: {string.Join(" / ", ui.AtlasAnchors)})",
+                  () => Lines(bandLines));
 
         // R6: the pool clears on exactly one automatic event — the Atlas closing. Deterministic and
         // observable. It is emphatically NOT cleared on "a reading that shares nothing with the pool": with
@@ -84,6 +126,19 @@ internal sealed class ScanLoop(RumourBook book, string locale, IScreenCapture ca
         {
             _panelWasUp = panel is not null;
             Diagnostic?.Invoke(_panelWasUp ? "panel up" : "panel gone");
+        }
+
+        if (panel is null)
+        {
+            // The interesting case is the tooltip being ON SCREEN and not found: it means the section header
+            // ("Island Rumours" / "Слухи об острове") did not match, and the only way to know why is to see the
+            // words OCR actually returned. Everything on screen, so nothing is filtered out by the very logic
+            // under suspicion.
+            Stage("atlas open, no panel", () => Lines(screenLines.Take(40)));
+        }
+        else
+        {
+            Stage("atlas open, panel found");
         }
 
         if (panel is not null)

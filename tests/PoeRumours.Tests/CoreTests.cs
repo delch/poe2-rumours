@@ -250,4 +250,74 @@ public class CoreTests
         Assert.True(snap.IsEmpty);
         Assert.Equal(0, snap.Samples);
     }
+
+    // ---- panel detection ------------------------------------------------------------------------------
+
+    private static TextLine Line(string text, int top) =>
+        new(text, System.Drawing.Rectangle.FromLTRB(1000, top, 1300, top + 20));
+
+    // Straight out of a Russian-client scan log (2026-07-14 20:12:53), the reading that made the overlay never
+    // appear. OCR clipped the section header to "Слухи об" — the tail of "Слухи об острове" never arrived — so
+    // the panel was never found, while every rumour line under it had been read perfectly.
+    //
+    // The clip has to be survived TWICE: the detector must still anchor the panel, and the reader must still
+    // recognise the clipped header as boilerplate. Miss the second and the header becomes a fourth row, which
+    // the reader rejects as a broken read — a different bug with identical symptoms.
+    [Fact]
+    public void Panel_SurvivesOcrClippingTheSectionHeader()
+    {
+        var book = Book();
+        var lines = new[]
+        {
+            Line("Неизведанные воды", 100),
+            Line("Используйте журнал, чтобы нанести область на керту", 130),
+            Line("Слухи об", 160),
+            Line("Бескрайние скалы...", 190),
+            Line("Сульфит!", 220),
+            Line("Поглощает:", 250),
+            Line("Журнал экспедиции", 280),
+        };
+
+        var panel = PanelDetector.Detect(lines, book.Ui("ru"));
+        Assert.NotNull(panel);
+
+        var reading = PanelReader.Read(panel.RumourLines, book, "ru");
+        Assert.True(reading.IsValid);
+        Assert.Equal(2, reading.Rows.Count);
+        Assert.Contains(reading.Rows, r => r.Rumour?.Id == "Craggy_Peninsula");
+        Assert.Contains(reading.Rows, r => r.Rumour?.Id == "Scorched_Cay");
+    }
+
+    // The title alone must be enough to find the panel: depending on a single signature means one bad read
+    // hides everything under it, which is exactly what happened above.
+    [Fact]
+    public void Panel_IsFound_FromTheTitleAlone()
+    {
+        var lines = new[]
+        {
+            Line("Неизведанные воды", 100),
+            Line("Используйте журнал, чтобы нанести область на керту", 130),
+            Line("Бескрайние скалы...", 190),
+            Line("Поглощает:", 250),
+        };
+
+        var panel = PanelDetector.Detect(lines, Book().Ui("ru"));
+        Assert.NotNull(panel);
+        Assert.Contains("Бескрайние скалы...", panel.RumourLines);
+    }
+
+    // The other half of the same rule: a fragment must still be a fragment OF the header. Six characters is
+    // the floor precisely so that ordinary game text cannot wander in.
+    [Fact]
+    public void Panel_IsNotFound_WhenNothingResemblesTheHeader()
+    {
+        var lines = new[]
+        {
+            Line("Инвентарь", 100),
+            Line("Бескрайние скалы...", 130),
+            Line("Поглощает:", 160),
+        };
+
+        Assert.Null(PanelDetector.Detect(lines, Book().Ui("ru")));
+    }
 }

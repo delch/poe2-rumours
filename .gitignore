@@ -2,4 +2,9 @@ bin/
 obj/
 *.user
 scan.log
+
+# Build output, the zip made from it, and anything unpacked from that zip. The release is a 58MB
+# self-contained exe: it belongs on a GitHub release page, never in the tree.
 dist/
+*.zip
+PoeRumours-*/

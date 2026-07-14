@@ -27,6 +27,10 @@ internal sealed class OcrReader
 {
     private readonly OcrEngine _engine;
 
+    // Which recogniser we actually got. "ru" can resolve to "ru-RU", "en" to "en-GB" or "en-US" — and when a
+    // scan log has to explain why nothing matched, the tag that was really used is the first thing to check.
+    public string RecognizerTag { get; }
+
     public OcrReader(string locale)
     {
         var available = OcrEngine.AvailableRecognizerLanguages.ToList();
@@ -38,7 +42,12 @@ internal sealed class OcrReader
             ? OcrEngine.TryCreateFromLanguage(new Language(match.LanguageTag))
               ?? throw new OcrLanguageMissingException(locale, available.Select(l => l.LanguageTag))
             : throw new OcrLanguageMissingException(locale, available.Select(l => l.LanguageTag));
+
+        RecognizerTag = match!.LanguageTag;
+        Available = available.Select(l => l.LanguageTag).ToList();
     }
+
+    public IReadOnlyList<string> Available { get; } = [];
 
     // Read every line in `region`. Bounds come back in ABSOLUTE SCREEN coordinates, not bitmap coordinates,
     // so a caller can reason about where things are on screen without knowing what was captured.

@@ -27,7 +27,14 @@ internal static class PanelDetector
 
     public static DetectedPanel? Detect(IReadOnlyList<TextLine> screenLines, UiStrings ui)
     {
-        var header = Best(screenLines, ui.PanelSection);
+        // EITHER signature anchors the panel: the title ("Uncharted Waters") or the section header ("Island
+        // Rumours"). Depending on one of them means one bad read hides the whole panel — which is exactly what
+        // happened on the Russian client, where OCR clipped "Слухи об острове" to "Слухи об" while the title
+        // above it read perfectly.
+        //
+        // Anchoring on the title is safe because the lines it drags in — the hint, and the section header
+        // itself — are boilerplate, and the reader already throws boilerplate away. That is what it is for.
+        var header = Topmost(screenLines, ui.PanelTitle, ui.PanelSection);
         if (header is null) return null;
 
         // The footer must be BELOW the header: "Expedition Logbook" also appears in the item's own tooltip
@@ -62,25 +69,24 @@ internal static class PanelDetector
         return new DetectedPanel(bounds, rumours.Select(l => l.Text).ToList());
     }
 
-    private static TextLine? Best(IReadOnlyList<TextLine> lines, string phrase)
+    // The highest matching line on screen, whichever signature it matched. Topmost, not best-scoring: the
+    // panel is a sandwich and we want its lid, so if both the title and the section header are readable the
+    // title wins and nothing between them can be mistaken for a rumour.
+    private static TextLine? Topmost(IReadOnlyList<TextLine> lines, params string[] phrases)
     {
-        TextLine? best = null;
-        double bestScore = AnchorThreshold;
+        TextLine? found = null;
         foreach (var l in lines)
         {
-            double s = Score(l.Text, phrase);
-            if (s >= bestScore) { bestScore = s; best = l; }
+            if (phrases.All(p => Score(l.Text, p) < AnchorThreshold)) continue;
+            if (found is null || l.Bounds.Top < found.Value.Bounds.Top) found = l;
         }
-        return best;
+        return found;
     }
 
-    private static double Score(string text, string phrase)
-    {
-        var a = NameMatching.Skeleton(text);
-        var b = NameMatching.Skeleton(phrase);
-        if (a.Length == 0 || b.Length == 0) return 0;
-        return a.Contains(b, StringComparison.Ordinal) ? 1.0 : NameMatching.Similarity(a, b);
-    }
+    // Same rule the boilerplate filter uses, and deliberately the same code: a signature clipped by OCR has to
+    // be recognised identically by both, or the detector finds a panel whose header the reader then treats as
+    // a rumour row — pushing the reading to four rows and getting the whole sample thrown away.
+    private static double Score(string text, string phrase) => NameMatching.PhraseScore(text, phrase);
 
     private static bool OverlapsBand(Rectangle r, int left, int right)
     {
