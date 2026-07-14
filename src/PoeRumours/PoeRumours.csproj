@@ -16,6 +16,20 @@
     <ApplicationIcon>../../media/app.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <!-- Shipped as a self-contained single file: one .exe next to a data\ folder, no installer, no runtime to
+       install first (non-goals). Self-contained costs ~70MB, and that is the right trade — "install .NET 10
+       Desktop Runtime first" is a wall most people simply do not climb.
+       Trimming stays OFF: WinForms reflects over its own types, and a trimmed build fails at runtime, in a
+       dialog, on someone else's machine. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
   <!-- The same .ico is also embedded, because the tray needs to pick a specific SIZE out of it. Pulling the
        icon off the exe (ExtractAssociatedIcon) always hands back 32px, which Windows then squashes to 16 —
        that is precisely the mush the hand-drawn small entries exist to avoid. -->

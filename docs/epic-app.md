@@ -1,6 +1,10 @@
 # Epic: PoE Rumours — the application
 
-Living design document. Requirements get added as we decide them; nothing here is code yet.
+Living design document. Requirements get added as we decide them.
+
+**Status: built and running (v0.1.0).** R1–R8 are implemented; a self-contained single-file `.exe` publishes to
+`dist/`. Where in-game use forced a rule to change, the requirement below is rewritten rather than annotated —
+a living document that describes the first draft instead of the shipped thing is worse than no document.
 
 ## Why this exists
 
@@ -140,8 +144,14 @@ Rasterising SVG → multi-size `.ico` needs no system install: a throwaway SkiaS
 
 ### R6 — The overlay
 
-**Shows, per rumour found:** name · map · kind (grand / boss / unique) · `Seen` count. Plus counters by
-kind — *"Found: 2 Grand · 1 boss"*. No letter ratings from anyone else's spreadsheet; see Q5.
+**Shows, per rumour found:** name · map · kind (grand / boss / unique). Plus counters by kind — *"Found: 2
+grand · 1 boss · 0 unique"* — and, in the footer, distinct/samples. No letter ratings from anyone else's
+spreadsheet; see Q5.
+
+**The `Seen` count is not on the plate.** It was, and it was removed in use: a bare unlabelled column of
+numbers reads as a claim the tool is not making, and it is not something the player acts on. It is still
+counted, and it still goes to `scan.log`, where it answers exactly the question it is good for — *did that
+rumour turn up in 8 samples out of 8, or 1?*
 
 Sort by **`rating`** (ours, from the data file), not by `kind`. The two do not line up, and that is the
 point: `Fallen stars` is a *grand* and `Stardrinker` is a *boss*, and both are S because of what they
@@ -152,8 +162,8 @@ ranking the list are different jobs.
 
 | button | does |
 |---|---|
-| ✕ close | dismiss the overlay |
-| 🔒 lock | keep the overlay on screen **while the Atlas is open**, even when the tooltip is not visible — so the accumulated list stays readable while the player is over in the inventory toggling a Saga. *Provisional: to be judged in use, and dropped if it earns nothing.* |
+| ✕ close | **get out of the way now** — not "never show me this again", which is what the tray is for. It holds only until rumours are back on screen (the rising edge; clearing it while the tooltip still sits there would make the ✕ undo itself the instant it was clicked). |
+| 🔒 lock | pin the plate for the whole Atlas session, **empty pool included**. That is the only case it changes anything — see R8, which made "stay up while the Atlas is open" the default. |
 | ↺ reset | clear the accumulated pool |
 
 **Reset is mandatory, not a convenience.** We cannot tell one tile from another: nothing on screen
@@ -211,6 +221,48 @@ zone entirely, at the cost of discoverability.
 - With the lock button on, **the panel is not on screen at all** while the overlay must be. Anchoring to a
   "last known position" is arbitrary.
 - A UI that moves on its own is a UI you have to hunt for. This one is where you left it.
+
+### R8 — When the overlay is on screen
+
+Written last, rewritten most. Every rule here exists because the previous one failed in the game.
+
+**The plate follows the rumours.**
+
+| event | behaviour |
+|---|---|
+| rumours on screen for **1 s** | the plate appears |
+| rumours leave | it goes **1.5 s** later |
+| cursor moves onto the plate | the countdown is cancelled; it stays |
+| cursor leaves the plate | the countdown restarts |
+| rumours come back | it appears again, whatever happened before — dismissed, timed out, dragged |
+| Atlas closes | it goes at once, and the pool resets (R6) |
+
+**Why the delay on the way in.** Dragging the cursor across the Atlas sweeps the tooltip on and off half a
+dozen tiles on the way to somewhere else. Without the delay the plate flashed at every one of them.
+
+**Why the delay on the way out, and why the cursor cancels it.** The plate's body is `HTTRANSPARENT`, so the
+cursor **passes through it to the map underneath** — which moves the cursor off the tile, which closes the
+game's tooltip. The first version hid the plate the moment the tooltip went, so it vanished precisely when the
+player reached for its buttons, and the buttons were unusable. Note what this means: **Windows never sends the
+window a `MouseEnter`** — as far as it is concerned the mouse is never over us. The cursor has to be polled
+(100 ms), and there is no way around it.
+
+**Why "on screen" is a fuzzy signal.** The detector *blinks*: OCR finds the tooltip on one tick and misses it
+on the next. The 1 s timer originally restarted on every miss — so on a client where OCR is flakier (Russian),
+the second never elapsed and **the overlay simply never appeared**, while `scan.log` looked perfectly healthy,
+because samples are recorded on the ticks that *did* find the panel. A gap must now outlast ~2 scans before it
+counts as gone, and **every panel up/gone transition is logged**, so the next instance of this is visible
+instead of inferred.
+
+### R9 — Screenshot mode (debugging)
+
+The overlay is invisible to screen capture by design (R6/architecture), which also means it cannot be
+screenshotted — an obstacle the moment anyone wants to show what the app looks like or report a bug with it.
+
+Tray → **Screenshot mode** lifts the exclusion **and pauses scanning in the same breath**. The two are not
+separable and the UI does not pretend otherwise: an overlay the scanner can see is an overlay it will read, and
+the rumour names *we drew* would come straight back in as if the game had shown them. While it is on, the tray
+tooltip says so, so it cannot be left on by accident and quietly explain why the pool stopped growing.
 
 ## Non-goals
 
@@ -361,8 +413,10 @@ only ever grows with more toggles. So the label reads *"Found: 2 Grand · 1 boss
 Grand"* — the second is a claim we cannot make and would be wrong often enough to matter.
 
 `Seen` carries the completeness information without pronouncing on it: everything sitting at 4–5 across ten
-samples means the pool is exhausted; a rumour on 1 out of ten samples means keep going. The player reads
-that off the column.
+samples means the pool is exhausted; a rumour on 1 out of ten samples means keep going.
+
+*Amended in use (R6):* the column is **not on the plate**. The owner did not want it, and unlabelled numbers
+are read as a verdict whether or not one is meant. It survives in `scan.log`.
 
 #### Estimator — NOT built, kept for reference
 The statistics below were worked out and validated before the decision above. Recorded so nobody re-derives
