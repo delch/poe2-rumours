@@ -1,0 +1,50 @@
+{
+  "version": 2,
+
+  "_purpose": [
+    "The on-screen UI text the scanner keys off. Two jobs:",
+    "  atlasGate  — proves the Atlas map is open, so we need not run a full-screen OCR every second.",
+    "  panel*     — identifies the Uncharted Waters tooltip among everything else on screen.",
+    "",
+    "These are INTERFACE strings, not item names: poe2db and the wiki do not carry them, so both locales",
+    "were read off screenshots of the running game (2026-07-14). Do not 'improve' them from a dictionary —",
+    "a string that does not match byte-for-byte produces a silent no-match, the exact failure R3 exists to",
+    "prevent. Match case-insensitively; the game styles these in small-caps and OCR reports casing loosely."
+  ],
+
+  "en": {
+    "atlasGate": "World",
+    "atlasAnchors": ["World", "Search here", "ACT 1", "ENDGAME", "INTERLUDE"],
+    "panelTitle": "Uncharted Waters",
+    "panelHint": "Use a logbook to chart the area",
+    "panelSection": "Island Rumours",
+    "panelConsumes": "Consumes:",
+    "panelItem": "Expedition Logbook",
+    "_verified": "screenshot of the running English client, 2026-07-14"
+  },
+
+  "ru": {
+    "atlasGate": "Мир",
+    "atlasAnchors": ["Мир", "Искать здесь", "Акт 1", "Задания"],
+    "panelTitle": "Неизведанные воды",
+    "panelHint": "Используйте журнал, чтобы нанести область на карту",
+    "panelSection": "Слухи об острове",
+    "panelConsumes": "Поглощает:",
+    "panelItem": "Журнал экспедиции",
+    "_verified": "screenshot of the running Russian client, 2026-07-14 — every string confirmed on screen"
+  },
+
+  "_atlasAnchors_note": [
+    "ANY one of these proves the Atlas is open. Several, OR'd, on purpose — see Q6.",
+    "",
+    "'World'/'Мир' alone is a trap: it is one STYLISED word on a decorated banner, and Windows OCR returns",
+    "nothing at all for it at some upscale factors while reading it cleanly at neighbouring ones (measured;",
+    "it cost the predecessor an hour). In Russian it is three letters. So it stays in the list, but it is",
+    "not allowed to be the only thing standing between us and a working app.",
+    "",
+    "The others are ordinary UI text in an ordinary font, which OCR handles incomparably better. And the",
+    "redundancy is not paranoia: in a real screenshot the rumour panel PARTIALLY COVERS the search box — so",
+    "that anchor vanishes exactly when the tooltip is open, which is when the app matters most. Occlusion by",
+    "the game's own panels is normal, and any single anchor can be the one that is covered."
+  ]
+}

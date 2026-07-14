@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/spikes/">
+    <Project Path="spikes/OverlaySpike/OverlaySpike.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/PoeRumours/PoeRumours.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PoeRumours.Tests/PoeRumours.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- 19041 is the floor for two things we depend on: WDA_EXCLUDEFROMCAPTURE (the overlay must be
+         invisible to our own screen capture, or the OCR reads our own text back) and the WinRT OCR
+         projection. -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>PoeRumours</RootNamespace>
+    <AssemblyTitle>PoE Rumours</AssemblyTitle>
+    <Description>Atlas overlay for Path of Exile 2 that accumulates an Uncharted Waters tile's full rumour pool across saga toggles and counts its Grand Expeditions.</Description>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <!-- The data lives at the repo root (data/), not next to the sources: it is edited by hand, reviewed as
+       data, and is the one part of this project a non-programmer would touch. Copied next to the exe at
+       build time, flattened into data\ so the loader has one place to look. -->
+  <ItemGroup>
+    <Content Include="../../data/*.json" LinkBase="data">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PoeRumours.Tests" />
+  </ItemGroup>
+
+</Project>
