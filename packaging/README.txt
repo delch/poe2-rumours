@@ -1,5 +1,6 @@
-PoE Rumours 0.1.0
-=================
+PoE Rumours
+===========
+(версию сборки видно в трее -> Settings…)
 
 Оверлей для атласа Path of Exile 2. Показывает, что на самом деле лежит на тайле
 Uncharted Waters — и, главное, сколько там Grand Expedition.

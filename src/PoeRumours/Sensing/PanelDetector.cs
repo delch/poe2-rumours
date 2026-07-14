@@ -41,7 +41,7 @@ internal static class PanelDetector
         // elsewhere on screen, and an anchor above the header would invert the sandwich and swallow the map.
         var footer = screenLines
             .Where(l => l.Bounds.Top >= header.Value.Bounds.Bottom)
-            .Where(l => Score(l.Text, ui.PanelConsumes) >= AnchorThreshold)
+            .Where(l => ui.PanelFooters.Any(f => Score(l.Text, f) >= AnchorThreshold))
             .OrderBy(l => l.Bounds.Top)
             .Select(l => (TextLine?)l)
             .FirstOrDefault();

@@ -18,6 +18,19 @@ internal sealed record PanelReading(IReadOnlyList<RumourRow> Rows)
 
 internal static class PanelReader
 {
+    // A row longer than this cannot be a rumour, whatever it says. The vocabulary is CLOSED — we know the
+    // longest line in it — so anything well past that is panel furniture, and the margin absorbs the extra
+    // characters OCR hallucinates. Named filtering is not enough on its own: on a second machine the hint
+    // came back as "“'Ю-юпьзуйте жмут, чтобы область карту", too mangled for any similarity check to place,
+    // and it sailed through as a rumour row. That pushed the reading to five rows, and a reading of 5 rows is
+    // thrown away whole — so every sample was discarded and the overlay stayed permanently empty.
+    private const int LengthMargin = 8;
+
+    // And no rumour, in any locale, ends in a colon — they end in "..." or "!". The panel's last line does
+    // ("Consumes:", "Поглощает:", "Требует:"). This catches the footer even in a client whose exact wording we
+    // have never seen, which is exactly how the last one arrived.
+    private static bool LooksLikeALabel(string line) => line.TrimEnd().EndsWith(':');
+
     public static PanelReading Read(IEnumerable<string> ocrLines, RumourBook book, string locale)
     {
         var ui = book.Ui(locale);
@@ -25,9 +38,13 @@ internal static class PanelReader
         var seenResolved = new HashSet<string>(StringComparer.Ordinal);
         var seenUnresolved = new HashSet<string>(StringComparer.Ordinal);
 
+        int longestRumour = book.Rumours.Max(r => NameMatching.Skeleton(r.In(locale).Line).Length);
+
         foreach (var line in ocrLines)
         {
             if (NameMatching.IsBoilerplate(line, ui)) continue;
+            if (LooksLikeALabel(line)) continue;
+            if (NameMatching.Skeleton(line).Length > longestRumour + LengthMargin) continue;
 
             var rumour = NameMatching.Resolve(line, book, locale);
 

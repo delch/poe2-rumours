@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
 
   "_purpose": [
     "The on-screen UI text the scanner keys off. Two jobs:",
@@ -18,7 +18,7 @@
     "panelTitle": "Uncharted Waters",
     "panelHint": "Use a logbook to chart the area",
     "panelSection": "Island Rumours",
-    "panelConsumes": "Consumes:",
+    "panelFooters": ["Consumes:"],
     "panelItem": "Expedition Logbook",
     "_verified": "screenshot of the running English client, 2026-07-14"
   },
@@ -29,10 +29,22 @@
     "panelTitle": "Неизведанные воды",
     "panelHint": "Используйте журнал, чтобы нанести область на карту",
     "panelSection": "Слухи об острове",
-    "panelConsumes": "Поглощает:",
+    "panelFooters": ["Поглощает:", "Требует:"],
     "panelItem": "Журнал экспедиции",
     "_verified": "screenshot of the running Russian client, 2026-07-14 — every string confirmed on screen"
   },
+
+  "_panelFooters_note": [
+    "The line above the item name, and there is more than one of them. Our client reads 'Поглощает:'; another",
+    "Russian client, same day, read 'Требует:' on every single tile — seen in its scan log, not guessed.",
+    "Why they differ is NOT established (a plausible reading is 'Requires' when you hold no Logbook and",
+    "'Consumes' when you do) and nothing in the code depends on knowing. The English list carries only the",
+    "string we have actually seen; a second one goes in when someone reads it off a screen, never before.",
+    "",
+    "The code does not rely on this list being complete: the reader also throws away any row ending in a",
+    "colon, because no rumour in any locale does. But the list still matters — a footer we recognise BOUNDS",
+    "the panel, and an unbounded panel keeps swallowing lines below it."
+  ],
 
   "_atlasAnchors_note": [
     "ANY one of these proves the Atlas is open. Several, OR'd, on purpose — see Q6.",

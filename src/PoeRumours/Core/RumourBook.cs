@@ -31,14 +31,16 @@ internal sealed record UiStrings(
     string PanelTitle,
     string PanelHint,
     string PanelSection,
-    string PanelConsumes,
+    // The panel's last line before the item name. There is MORE THAN ONE: a Russian client showed "Требует:"
+    // where ours showed "Поглощает:". It is a list because the next client will show a third.
+    IReadOnlyList<string> PanelFooters,
     string PanelItem)
 {
     // Everything in the panel that is NOT a rumour. The predecessor never filtered "Consumes:", so that
     // line was resolved as an unknown rumour on every single tile and its "unknown rumour" indicator was
     // permanently lit. Boilerplate has to be named to be excluded.
     public IEnumerable<string> Boilerplate =>
-        [PanelTitle, PanelHint, PanelSection, PanelConsumes, PanelItem];
+        [PanelTitle, PanelHint, PanelSection, PanelItem, .. PanelFooters];
 }
 
 // The loaded, validated dataset. Construction either yields a usable book or throws — there is no
@@ -128,9 +130,13 @@ internal sealed class RumourBook
             if (anchors.Count == 0)
                 throw new InvalidDataException($"ui-strings.json: locale '{loc}' has no atlasAnchors");
 
+            var footers = Req(ue, "panelFooters").EnumerateArray().Select(a => a.GetString()!).ToList();
+            if (footers.Count == 0)
+                throw new InvalidDataException($"ui-strings.json: locale '{loc}' has no panelFooters");
+
             ui[loc] = new UiStrings(
                 anchors, Str(ue, "panelTitle"), Str(ue, "panelHint"),
-                Str(ue, "panelSection"), Str(ue, "panelConsumes"), Str(ue, "panelItem"));
+                Str(ue, "panelSection"), footers, Str(ue, "panelItem"));
         }
 
         return new RumourBook(rumours, locales, ui);

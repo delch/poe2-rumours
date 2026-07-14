@@ -228,15 +228,33 @@ public class CoreTests
         Assert.Equal("Frigid_Bluffs", ids[2]);          // unrated
     }
 
+    // An unknown rumour must still be COUNTED as a row — the tile may hold something our data does not know,
+    // and reporting "one line we could not place" is honest where dropping it is not.
+    //
+    // Note the line is rumour-LENGTH. It used to read "Some rumour we have never heard of", which the reader
+    // now discards, and rightly: nothing that long is a rumour in a closed 20-line vocabulary. That is the
+    // rule that keeps the panel's mangled hint out of the pool.
     [Fact]
     public void Pool_UnknownLineIsCountedButNotPooled()
     {
         var pool = new TilePool();
-        pool.Observe(Read("Cold as ice...", "Some rumour we have never heard of"));
+        pool.Observe(Read("Cold as ice...", "Buried lanterns..."));
 
         var snap = pool.Snapshot();
         Assert.Single(snap.Rumours);
         Assert.Equal(1, snap.UnknownLines);
+    }
+
+    // The hint is roughly three times the length of any rumour, so it cannot be one — however badly OCR has
+    // mangled it, and in whatever locale.
+    [Fact]
+    public void Reading_DropsAnythingTooLongToBeARumour()
+    {
+        var reading = Read("Cold as ice...", "Use a Iogbook ta chart tne area anj sail there");
+
+        Assert.True(reading.IsValid);
+        Assert.Single(reading.Rows);
+        Assert.Equal(0, reading.Rows.Count(r => !r.Resolved));
     }
 
     [Fact]
@@ -249,6 +267,34 @@ public class CoreTests
         var snap = pool.Snapshot();
         Assert.True(snap.IsEmpty);
         Assert.Equal(0, snap.Samples);
+    }
+
+    // ---- a second machine, whose OCR is much worse ------------------------------------------------------
+
+    // Straight out of another player's scan log (2026-07-14 20:42), where the overlay was permanently empty.
+    // Every sample was being thrown away, and the log said why: five rows, and the game never shows more than
+    // three, so the whole reading is refused as broken.
+    //
+    // The three rumours read fine. The two intruders were the hint — mangled far past anything a similarity
+    // check could place — and "Требует:", a footer whose wording we had never seen (ours says "Поглощает:").
+    // Both are now excluded structurally rather than by name: too long to be a rumour, and ends in a colon.
+    [Fact]
+    public void Reading_SurvivesAManglendHintAndAnUnknownFooter()
+    {
+        var reading = PanelReader.Read(
+        [
+            "“'Ю-юпьзуйте жмут, чтобы область карту",
+            "Дикие бродяж на Коле...",
+            "Тепло, не опасно...",
+            "Нечего пить...",
+            "Требует:",
+        ], Book(), "ru");
+
+        Assert.True(reading.IsValid);
+        Assert.Equal(3, reading.Rows.Count);
+        Assert.Contains(reading.Rows, r => r.Rumour?.Id == "Lush_Isle");          // Дикие бродят на воле...
+        Assert.Contains(reading.Rows, r => r.Rumour?.Id == "Grazed_Prairie");     // Тепло, но опасно...
+        Assert.Contains(reading.Rows, r => r.Rumour?.Id == "Stagnant_Basin");     // Нечего пить...
     }
 
     // ---- panel detection ------------------------------------------------------------------------------
