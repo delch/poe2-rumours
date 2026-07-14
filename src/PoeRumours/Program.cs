@@ -41,11 +41,21 @@ internal static class Program
 // moment someone forgets one, and a build that misreports its own version poisons every log that follows.
 internal static class AppVersion
 {
-    public static string Current =>
-        typeof(AppVersion).Assembly
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-        ?? typeof(AppVersion).Assembly.GetName().Version?.ToString()
-        ?? "unknown";
+    public static string Current
+    {
+        get
+        {
+            var v = typeof(AppVersion).Assembly
+                        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                    ?? typeof(AppVersion).Assembly.GetName().Version?.ToString()
+                    ?? "unknown";
+
+            // The SDK appends the build metadata ("0.1.0+9b1c3f…") to the informational version. Useful in a
+            // log, noise in a dialog — and long enough to shove the label into the buttons next to it.
+            int plus = v.IndexOf('+');
+            return plus < 0 ? v : v[..plus];
+        }
+    }
 }
 
 internal static class ScanDiagnostic

@@ -15,17 +15,22 @@ internal sealed class ScanLoop(RumourBook book, string locale, IScreenCapture ca
 {
     private readonly TilePool _pool = new();
     private bool _atlasWasOpen;
+    private bool _panelWasUp;
 
     public event Action<ScanState>? Updated;
     public event Action<string>? Diagnostic;
 
     public void ResetPool() => _pool.Reset();
 
+    // Stops reading the screen without losing the pool. Exists for screenshot mode: the overlay can only be
+    // made visible to screen capture while nothing is capturing, or the scanner reads its own plate back.
+    public bool Paused { get; set; }
+
     public async Task RunAsync(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
-            try { Tick(); }
+            try { if (!Paused) Tick(); }
             catch (Exception ex) { Diagnostic?.Invoke($"error: {ex.GetType().Name}: {ex.Message}"); }
 
             try { await Task.Delay(TickMs, ct); }
@@ -71,6 +76,15 @@ internal sealed class ScanLoop(RumourBook book, string locale, IScreenCapture ca
 
         var screenLines = ocr.Read(capture, game.Value.Bounds);
         var panel = PanelDetector.Detect(screenLines, ui);
+
+        // Log every transition, not just samples. A sample is only recorded when the displayed triple CHANGES,
+        // so a detector that finds the panel on one tick and loses it on the next looks perfectly healthy in a
+        // sample log while being anything but — and the overlay's show/hide rules hang on exactly this signal.
+        if ((panel is not null) != _panelWasUp)
+        {
+            _panelWasUp = panel is not null;
+            Diagnostic?.Invoke(_panelWasUp ? "panel up" : "panel gone");
+        }
 
         if (panel is not null)
         {

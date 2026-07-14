@@ -16,9 +16,23 @@ internal sealed class App : ApplicationContext
     private readonly NotifyIcon _tray;
     private readonly CancellationTokenSource _cts = new();
 
-    // Set by the ✕. Kept until the Atlas closes, so the scan loop's next pass does not simply put the overlay
-    // straight back up while the player is still on the same tile.
+    // The ✕ means "get out of the way NOW", not "never show me this again" — that is what the tray is for. It
+    // holds only until the rumours come back on screen; see the rising edge in OnScan.
     private bool _dismissed;
+    private bool _panelWasUp;
+
+    // The rumours must sit on screen this long before the plate answers them. Dragging the cursor across the
+    // Atlas sweeps the tooltip on and off half a dozen tiles on the way to somewhere else; without this, the
+    // overlay would flash at every one of them.
+    private static readonly TimeSpan ShowDelay = TimeSpan.FromSeconds(1);
+
+    // ...but "on screen" is what the DETECTOR says, and the detector blinks: OCR reads a tooltip on one tick
+    // and misses it on the next. Restarting the clock on every blink means the second never elapses and the
+    // plate never appears, while the sample log looks perfectly healthy — samples are recorded on the ticks
+    // that DID find the panel. So a gap only counts as "gone" once it outlasts a couple of scans.
+    private static readonly TimeSpan Blink = TimeSpan.FromMilliseconds(1600);
+    private DateTime? _panelSince;
+    private DateTime? _panelLastSeen;
 
     public App(RumourBook book, AppConfig config, OcrReader ocr)
     {
@@ -37,6 +51,13 @@ internal sealed class App : ApplicationContext
         menu.Items.Add("Show overlay", null, (_, _) => { _dismissed = false; });
         menu.Items.Add("Reset pool", null, (_, _) => ResetPool());
         menu.Items.Add(new ToolStripSeparator());
+        _screenshotMode = new ToolStripMenuItem("Screenshot mode", null, (s, _) => ToggleScreenshotMode((ToolStripMenuItem)s!))
+        {
+            CheckOnClick = true,
+            ToolTipText = "Let the overlay into screenshots. Scanning is paused while it is on.",
+        };
+        menu.Items.Add(_screenshotMode);
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Settings…", null, (_, _) => ShowSettings());
         menu.Items.Add("Exit", null, (_, _) => Exit());
 
@@ -52,9 +73,29 @@ internal sealed class App : ApplicationContext
         _ = _loop.RunAsync(_cts.Token);
     }
 
+    private readonly ToolStripMenuItem _screenshotMode;
+
+    // Debug aid: make the plate visible to screen capture so it turns up in a screenshot.
+    //
+    // The two halves are not separable. The overlay is normally excluded from capture because the scanner OCRs
+    // the whole game window and would otherwise read the plate's own text back — the rumour names WE drew
+    // returning as if the game had shown them, poisoning the pool with rumours the tile does not have. So
+    // showing it to the camera means pausing the camera. The pool survives; the app simply stops looking until
+    // this is switched off.
+    private void ToggleScreenshotMode(ToolStripMenuItem item)
+    {
+        bool on = item.Checked;
+        _loop.Paused = on;
+        _overlay.SetVisibleToCapture(on);
+        if (on) _overlay.SetWanted(true);   // nothing is scanning, so nothing else will keep it on screen
+        _tray.Text = on ? "PoE Rumours — screenshot mode (scanning paused)" : $"PoE Rumours {AppVersion.Current}";
+        Log(on ? "screenshot mode ON — scanning paused" : "screenshot mode off — scanning resumed");
+    }
+
     private void ResetPool()
     {
         _loop.ResetPool();
+        _dismissed = false;
         _overlay.Update(new PoolSnapshot([], 0, 0));
     }
 
@@ -83,6 +124,31 @@ internal sealed class App : ApplicationContext
 
     private void OnScan(ScanState st)
     {
+        bool panelUp = st.Panel is not null;
+
+        // Rumours coming back on screen beats everything the player did to the plate before — dismissed with
+        // the ✕, timed out on its own, whatever. A fresh tooltip is a fresh question, so it gets an answer.
+        // It is the RISING EDGE that matters, not the panel merely being up: clearing on every scan while the
+        // tooltip sits there would make the ✕ undo itself the instant it was clicked.
+        if (panelUp && !_panelWasUp) _dismissed = false;
+        _panelWasUp = panelUp;
+
+        var now = DateTime.UtcNow;
+        if (panelUp)
+        {
+            // A gap shorter than Blink is the detector stuttering, not the tooltip closing — carry on counting.
+            if (_panelLastSeen is null || now - _panelLastSeen > Blink) _panelSince = now;
+            _panelLastSeen = now;
+        }
+        else if (_panelLastSeen is { } last && now - last > Blink)
+        {
+            _panelSince = null;
+            _panelLastSeen = null;
+        }
+
+        bool panelPresent = _panelLastSeen is not null;
+        bool panelSettled = panelPresent && now - _panelSince >= ShowDelay;
+
         // Off the Atlas the overlay has nothing to say, and the pool has already been reset by the loop.
         if (!st.AtlasOpen)
         {
@@ -93,19 +159,14 @@ internal sealed class App : ApplicationContext
 
         if (_dismissed) { _overlay.HideOverlay(); return; }
 
-        // The pool OUTLIVES the panel, so the overlay must too: once this tile has shown anything, the list
-        // stays up for as long as the Atlas is open. Hiding it whenever the tooltip closes would defeat the
-        // entire feature — accumulating means walking the cursor off the tile and into the inventory to toggle
-        // a Saga, which is exactly when the player wants to read what has been found so far.
-        //
-        // It also made the overlay *appear* to vanish on hover: the plate is click-through, so putting the
-        // cursor over it passes straight through to the map underneath, which moves the cursor off the tile,
-        // which closes the tooltip. Nothing to do with hovering — the panel simply went away.
-        bool show = st.Panel is not null || !st.Pool.IsEmpty;
-        if (!show) { _overlay.HideOverlay(); return; }
-
         _overlay.Update(st.Pool);
-        _overlay.ShowOverlay();
+
+        // The plate follows the rumours: up once they have settled, gone a moment after they leave. The
+        // lingering — and holding it open while the cursor is on it — is the overlay's own business, because
+        // it hangs on the cursor, which moves far faster than this ~1Hz loop.
+        //
+        // 🔒 pins it for the whole Atlas session instead, empty pool included.
+        _overlay.SetWanted(_overlay.Locked || panelSettled);
     }
 
     // The scanner is the only part of this app that can be wrong in a way the player cannot see: a rumour the

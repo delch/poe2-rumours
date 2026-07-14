@@ -41,16 +41,22 @@ internal sealed class SettingsForm : Form
             ForeColor = SystemColors.GrayText,
         };
 
+        var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Location = new Point(150, 110), Width = 80 };
+        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(240, 110), Width = 80 };
+
+        // Fixed width up to where the buttons begin, and ellipsised rather than allowed to grow. A version
+        // string is not something we control — the SDK can make it as long as it likes — so an AutoSize label
+        // here just walks over the buttons, which is exactly what it did.
         var version = new Label
         {
             Text = $"version {AppVersion.Current}",
-            AutoSize = true,
-            Location = new Point(16, 118),
+            AutoSize = false,
+            AutoEllipsis = true,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Location = new Point(16, 110),
+            Size = new Size(ok.Left - 16 - 12, 23),
             ForeColor = SystemColors.GrayText,
         };
-
-        var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Location = new Point(150, 110), Width = 80 };
-        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(240, 110), Width = 80 };
 
         Controls.AddRange([label, _lang, hint, version, ok, cancel]);
         AcceptButton = ok;

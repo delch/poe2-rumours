@@ -11,6 +11,7 @@ internal sealed class AppConfig
     public int OverlayX { get; set; } = -1;   // -1 = not placed yet; the overlay picks a corner
     public int OverlayY { get; set; } = -1;
     public string Language { get; set; } = "en";
+    public bool Locked { get; set; }
 
     [JsonIgnore]
     public Point? OverlayPosition => OverlayX >= 0 && OverlayY >= 0 ? new Point(OverlayX, OverlayY) : null;

@@ -22,6 +22,12 @@ internal sealed class OverlayForm : Form
     public event Action? ResetRequested;
     public event Action? CloseRequested;
 
+    // 🔒: while the Atlas is open, stay on screen no matter what — including with an empty pool, when there is
+    // nothing to say yet. Unlocked, the plate only appears once the tile has actually shown something.
+    private bool _locked;
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public bool Locked => _locked;
+
     private readonly Font _nameFont = new("Segoe UI", 11, FontStyle.Bold);
     private readonly Font _cellFont = new("Segoe UI", 10);
     private readonly Font _smallFont = new("Segoe UI", 9, FontStyle.Bold);
@@ -35,7 +41,7 @@ internal sealed class OverlayForm : Form
     private const int BtnW = 22;
 
     // Button boxes, in WINDOW coordinates (the window is the plate, so there is no screen-space maths).
-    private Rectangle _closeBtn, _resetBtn;
+    private Rectangle _closeBtn, _lockBtn, _resetBtn;
 
     public OverlayForm(AppConfig config)
     {
@@ -44,9 +50,13 @@ internal sealed class OverlayForm : Form
         ShowInTaskbar = false;
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
+        _locked = config.Locked;
 
         var pos = config.OverlayPosition ?? DefaultCorner();
         Bounds = new Rectangle(pos.X, pos.Y, 460, 160);
+
+        _cursorWatch.Tick += CursorTick;
+        _cursorWatch.Start();
     }
 
     private static Point DefaultCorner()
@@ -73,11 +83,23 @@ internal sealed class OverlayForm : Form
     // the pool as fresh observations, and the panel's detected bounds would shift because of our text, moving
     // the overlay, changing the next frame. The predecessor oscillated once per scan for exactly this reason.
     // Side effect worth knowing: an excluded window is also absent from screenshots and OBS. That is expected.
+    private const uint WDA_NONE = 0x00;
+    private const uint WDA_EXCLUDEFROMCAPTURE = 0x11;
+
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        const uint WDA_EXCLUDEFROMCAPTURE = 0x11;
         SetWindowDisplayAffinity(Handle, WDA_EXCLUDEFROMCAPTURE);
+    }
+
+    // Debug only: let the plate into screenshots. Safe ONLY with the scanner paused — an overlay the scanner
+    // can see is an overlay it will read, and the rumour names it drew come straight back in as if the game
+    // had shown them. The caller (App) is what enforces the pause; this method just flips the affinity.
+    public void SetVisibleToCapture(bool visible)
+    {
+        if (IsDisposed) return;
+        if (InvokeRequired) { BeginInvoke(() => SetVisibleToCapture(visible)); return; }
+        SetWindowDisplayAffinity(Handle, visible ? WDA_NONE : WDA_EXCLUDEFROMCAPTURE);
     }
 
     protected override void WndProc(ref Message m)
@@ -94,7 +116,7 @@ internal sealed class OverlayForm : Form
             int sy = unchecked((short)((long)m.LParam >> 16));
             var p = new Point(sx - Bounds.Left, sy - Bounds.Top);   // -> window coords
 
-            if (_closeBtn.Contains(p) || _resetBtn.Contains(p))
+            if (_closeBtn.Contains(p) || _lockBtn.Contains(p) || _resetBtn.Contains(p))
                 m.Result = HTCLIENT;                 // the buttons must catch the mouse
             else if (p.Y < HeaderH)
                 m.Result = HTCAPTION;                // grab handle: Windows drags the window for us
@@ -117,6 +139,13 @@ internal sealed class OverlayForm : Form
     {
         if (_closeBtn.Contains(e.Location)) CloseRequested?.Invoke();
         else if (_resetBtn.Contains(e.Location)) ResetRequested?.Invoke();
+        else if (_lockBtn.Contains(e.Location))
+        {
+            _locked = !_locked;
+            _config.Locked = _locked;
+            _config.Save();
+            Rerender();
+        }
     }
 
     public void Update(PoolSnapshot pool)
@@ -127,18 +156,59 @@ internal sealed class OverlayForm : Form
         Rerender();
     }
 
-    public void ShowOverlay()
+    // How long the plate lingers after the rumours leave the screen. Long enough to move the mouse onto it,
+    // short enough not to sit there as clutter.
+    private static readonly TimeSpan Grace = TimeSpan.FromMilliseconds(1500);
+
+    private bool _wanted;              // the scanner says the rumours are on screen right now
+    private DateTime? _hideAt;         // pending hide; null when nothing is counting down
+    private readonly System.Windows.Forms.Timer _cursorWatch = new() { Interval = 100 };
+
+    // Is the plate wanted on screen? Called every scan. The lingering is handled here rather than in the scan
+    // loop because it has to react to the CURSOR, which moves far faster than the ~1Hz scan.
+    public void SetWanted(bool wanted)
     {
         if (IsDisposed) return;
-        if (InvokeRequired) { BeginInvoke(ShowOverlay); return; }
-        if (!Visible) Show();
-        Rerender();
+        if (InvokeRequired) { BeginInvoke(() => SetWanted(wanted)); return; }
+
+        _wanted = wanted;
+        if (wanted)
+        {
+            _hideAt = null;
+            if (!Visible) Show();
+            Rerender();
+        }
+        else if (Visible && _hideAt is null && !CursorIsOver)
+        {
+            _hideAt = DateTime.UtcNow + Grace;
+        }
+    }
+
+    // The body is HTTRANSPARENT, so the mouse never enters this window as far as Windows is concerned and no
+    // MouseEnter/MouseLeave will ever arrive. Polling the cursor is the only way to know it is over us — and it
+    // has to be known, because the plate must not evaporate from under a hand reaching for its buttons.
+    private bool CursorIsOver => Bounds.Contains(Cursor.Position);
+
+    private void CursorTick(object? sender, EventArgs e)
+    {
+        if (!Visible || _wanted) return;
+
+        if (CursorIsOver)
+        {
+            _hideAt = null;                              // held by the cursor
+            return;
+        }
+
+        _hideAt ??= DateTime.UtcNow + Grace;             // cursor just left: the clock starts again
+        if (DateTime.UtcNow >= _hideAt) HideOverlay();
     }
 
     public void HideOverlay()
     {
         if (IsDisposed) return;
         if (InvokeRequired) { BeginInvoke(HideOverlay); return; }
+        _wanted = false;
+        _hideAt = null;
         if (Visible) Hide();
     }
 
@@ -212,9 +282,11 @@ internal sealed class OverlayForm : Form
 
         int bx = w - PadX - BtnW;
         _closeBtn = new Rectangle(bx, 3, BtnW, HeaderH - 6); bx -= BtnW + 4;
+        _lockBtn = new Rectangle(bx, 3, BtnW, HeaderH - 6); bx -= BtnW + 4;
         _resetBtn = new Rectangle(bx, 3, BtnW, HeaderH - 6);
 
         DrawClose(g, _closeBtn);
+        DrawLock(g, _lockBtn, _locked);
         DrawReset(g, _resetBtn);
 
         int y = HeaderH + PadY;
@@ -298,6 +370,15 @@ internal sealed class OverlayForm : Form
         g.DrawLine(p, r.Right - i, r.Top + i, r.Left + i, r.Bottom - i);
     }
 
+    // Lit when locked, so the state is readable at a glance rather than something you have to remember.
+    private static void DrawLock(Graphics g, Rectangle r, bool on)
+    {
+        using var p = new Pen(on ? Color.FromArgb(255, 214, 110) : Color.FromArgb(150, 156, 170), 1.6f);
+        var body = new Rectangle(r.Left + 6, r.Top + 9, r.Width - 12, r.Height - 13);
+        g.DrawRectangle(p, body);
+        g.DrawArc(p, body.Left + 2, r.Top + 3, body.Width - 4, 10, 180, 180);
+    }
+
     private static void DrawReset(Graphics g, Rectangle r)
     {
         using var p = new Pen(Color.FromArgb(200, 205, 215), 1.6f);
@@ -351,6 +432,7 @@ internal sealed class OverlayForm : Form
     {
         if (disposing)
         {
+            _cursorWatch.Dispose();
             _nameFont.Dispose(); _cellFont.Dispose(); _smallFont.Dispose(); _buffer?.Dispose();
         }
         base.Dispose(disposing);
