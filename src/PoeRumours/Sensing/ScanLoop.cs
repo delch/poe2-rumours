@@ -16,6 +16,7 @@ internal sealed class ScanLoop(RumourBook book, string locale, IScreenCapture ca
     private readonly TilePool _pool = new();
     private bool _atlasWasOpen;
     private bool _panelWasUp;
+    private string _gameName = "";
 
     public event Action<ScanState>? Updated;
     public event Action<string>? Diagnostic;
@@ -76,10 +77,18 @@ internal sealed class ScanLoop(RumourBook book, string locale, IScreenCapture ca
 
         if (game is null)
         {
-            Stage("game not running (looking for a process named PathOfExile)");
+            Stage("game not running (no visible window of a process named PathOfExile*)");
             var none = new ScanState(false, false, false, null, _pool.Snapshot());
             Updated?.Invoke(none);
             return none;
+        }
+
+        // Which build is running is worth one line: Steam and standalone are different process names, and
+        // getting that wrong makes the app do nothing whatsoever, which reads exactly like the game being shut.
+        if (game.Value.ProcessName != _gameName)
+        {
+            _gameName = game.Value.ProcessName;
+            Diagnostic?.Invoke($"game found: {_gameName} ({game.Value.Bounds.Width}x{game.Value.Bounds.Height})");
         }
 
         if (!game.Value.IsForeground)

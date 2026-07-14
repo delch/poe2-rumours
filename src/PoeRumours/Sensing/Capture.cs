@@ -29,18 +29,31 @@ internal sealed class GdiScreenCapture : IScreenCapture
 }
 
 // Where the game is, and whether the player is actually looking at it.
-internal readonly record struct GameWindow(IntPtr Handle, Rectangle Bounds, bool IsForeground)
+internal readonly record struct GameWindow(IntPtr Handle, Rectangle Bounds, bool IsForeground, string ProcessName)
 {
+    // Match on the PREFIX, not the exact name. The Steam build has never been called the same thing as the
+    // standalone one ("PathOfExileSteam"), so an exact match finds nothing on a Steam install and the app sits
+    // there doing nothing at all — a total failure that looks identical to the game not being open.
+    private const string NamePrefix = "PathOfExile";
+
     public static GameWindow? Find()
     {
-        var p = Process.GetProcessesByName("PathOfExile").FirstOrDefault(x => x.MainWindowHandle != IntPtr.Zero);
+        Process? p = null;
+        foreach (var proc in Process.GetProcesses())
+        {
+            if (!proc.ProcessName.StartsWith(NamePrefix, StringComparison.OrdinalIgnoreCase)) continue;
+            if (proc.MainWindowHandle == IntPtr.Zero) continue;   // launcher / background helper, not the game
+            p = proc;
+            break;
+        }
         if (p is null) return null;
         if (!GetWindowRect(p.MainWindowHandle, out var r)) return null;
 
         return new GameWindow(
             p.MainWindowHandle,
             Rectangle.FromLTRB(r.left, r.top, r.right, r.bottom),
-            GetForegroundWindow() == p.MainWindowHandle);
+            GetForegroundWindow() == p.MainWindowHandle,
+            p.ProcessName);
     }
 
     // The Atlas UI is anchored to the top of the viewport: the World banner, the act tabs and the search box
