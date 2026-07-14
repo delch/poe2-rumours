@@ -12,7 +12,7 @@
     <RootNamespace>PoeRumours</RootNamespace>
     <AssemblyTitle>PoE Rumours</AssemblyTitle>
     <Description>Atlas overlay for Path of Exile 2 that accumulates an Uncharted Waters tile's full rumour pool across saga toggles and counts its Grand Expeditions.</Description>
-    <Version>0.1.3</Version>
+    <Version>0.1.5</Version>
     <ApplicationIcon>../../media/app.ico</ApplicationIcon>
   </PropertyGroup>
 

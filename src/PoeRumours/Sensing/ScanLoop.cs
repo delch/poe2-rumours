@@ -166,15 +166,34 @@ internal sealed class ScanLoop(RumourBook book, string locale, IScreenCapture ca
             var region = Rectangle.Inflate(panel.Bounds, 48, 48);
             region.Intersect(game.Value.Bounds);
 
-            var closeLines = ocr.Read(capture, region, wantScale: 3);
-            closeMs = clock.ElapsedMilliseconds;
-
-            var closePanel = PanelDetector.Detect(closeLines, ui);
-            if (closePanel is not null)
+            // A LADDER, not a magic number. Measured on a second machine (1936x1048): x1 loses a rumour to a
+            // truncated read ("Суль"), x2 gets all three, and x3 and up split a line in half so the tail
+            // arrives alone ("руины...") and resolves to nothing. Magnification does not merely sharpen — past
+            // a point it changes how the engine breaks text into lines, and more is emphatically not better.
+            //
+            // So climb, and stop the moment the reading is clean. The scale that worked is remembered and
+            // tried first next time: it is a property of the machine (how tall the game's text is in pixels
+            // there), so once learned it keeps paying.
+            foreach (var scale in Ladder())
             {
-                var closeReading = PanelReader.Read(closePanel.RumourLines, book, locale);
-                if (Better(closeReading, reading)) { panel = closePanel; reading = closeReading; }
+                var lines = ocr.Read(capture, region, wantScale: scale);
+                var p = PanelDetector.Detect(lines, ui);
+                if (p is null) continue;
+
+                var r = PanelReader.Read(p.RumourLines, book, locale);
+                if (Better(r, reading)) { panel = p; reading = r; }
+
+                if (IsClean(reading))
+                {
+                    if (_bestScale != scale)
+                    {
+                        _bestScale = scale;
+                        Diagnostic?.Invoke($"ocr: this machine reads the panel best at x{scale}");
+                    }
+                    break;
+                }
             }
+            closeMs = clock.ElapsedMilliseconds;
         }
 
         if (DateTime.UtcNow - _lastTiming > TimeSpan.FromSeconds(30))
@@ -229,8 +248,19 @@ internal sealed class ScanLoop(RumourBook book, string locale, IScreenCapture ca
         return state;
     }
 
+    // The magnifications to try, best-known first. Kept short on purpose: each rung is another OCR pass inside
+    // one tick, and beyond x3 the engine starts splitting lines rather than reading them better.
+    private int _bestScale;
+
+    private IEnumerable<int> Ladder()
+    {
+        if (_bestScale > 1) yield return _bestScale;
+        foreach (var s in new[] { 2, 3 })
+            if (s != _bestScale) yield return s;
+    }
+
     // Clean = every row is a rumour we know. Anything else — a rejected reading, or a line we could not place
-    // — means the cheap pass may simply not have read well enough, and is worth one magnified retry.
+    // — means the cheap pass may simply not have read well enough, and is worth a magnified retry.
     private static bool IsClean(PanelReading r) => r.IsValid && r.Rows.All(x => x.Resolved);
 
     // A retry only wins if it is genuinely better: valid beats invalid, then more resolved rows. Reading WORSE

@@ -119,20 +119,30 @@ internal static class ScanDiagnostic
     }
 }
 
-// Reads the rumour panel at every upscale factor and reports what each one produced. Run it with the tooltip
-// on screen: `PoeRumours.exe --probe [locale]`.
+// Reads the rumour panel at every upscale factor and reports what each one produced.
 //
 // This exists because the factor cannot be reasoned about. The scoreboard it prints — how many rumour lines
 // each factor RESOLVED, not how pretty the text looks — is the only thing that settles it, and it has to be
 // re-run on any machine where the app misbehaves, because the answer depends on how many pixels tall the
 // game's text is there.
+//
+// It is reachable from the TRAY MENU, not only from a command line. A diagnostic that requires typing
+// `--probe` into a terminal is a diagnostic the person who actually has the broken machine will never run —
+// which makes it useless precisely where it is needed.
 internal static class UpscaleProbe
 {
-    public static void Run(string[] args)
+    public static string LogPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PoeRumours", "probe.log");
+
+    public static void Run(string[] args) =>
+        Run(args.FirstOrDefault(a => a is "en" or "ru") ?? "en");
+
+    // Returns a one-line verdict for the caller to show; the detail is in probe.log.
+    public static string Run(string locale)
     {
-        var locale = args.FirstOrDefault(a => a is "en" or "ru") ?? "en";
-        var log = new StreamWriter(File.Create("probe.log")) { AutoFlush = true };
-        void W(string s) { log.WriteLine(s); Console.WriteLine(s); }
+        Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
+        using var log = new StreamWriter(File.Create(LogPath)) { AutoFlush = true };
+        void W(string s) => log.WriteLine(s);
 
         var book = RumourBook.Load(Path.Combine(AppContext.BaseDirectory, "data"));
         var ocr = new OcrReader(locale);
@@ -140,17 +150,23 @@ internal static class UpscaleProbe
         var ui = book.Ui(locale);
 
         var game = GameWindow.Find();
-        if (game is null) { W("game not running"); return; }
+        if (game is null) { W("game not running"); return "The game is not running."; }
 
         W($"=== upscale probe | {AppVersion.Current} | locale '{locale}' | OCR '{ocr.RecognizerTag}' " +
           $"| screen {game.Value.Bounds.Width}x{game.Value.Bounds.Height} ===");
 
         var rough = PanelDetector.Detect(ocr.Read(capture, game.Value.Bounds, wantScale: 1), ui);
-        if (rough is null) { W("no panel on screen — hover an Uncharted Waters tile and run again"); return; }
+        if (rough is null)
+        {
+            W("no panel on screen — hover an Uncharted Waters tile and run again");
+            return "No rumour panel on screen. Hover an Uncharted Waters tile, then run the probe again.";
+        }
 
         var region = Rectangle.Inflate(rough.Bounds, 48, 48);
         region.Intersect(game.Value.Bounds);
         W($"panel at {region.Width}x{region.Height}\n");
+
+        var best = (scale: 0, resolved: -1);
 
         for (int scale = 1; scale <= 6; scale++)
         {
@@ -166,6 +182,7 @@ internal static class UpscaleProbe
 
             var reading = PanelReader.Read(panel.RumourLines, book, locale);
             int ok = reading.Rows.Count(r => r.Resolved);
+            if (reading.IsValid && ok > best.resolved) best = (scale, ok);
 
             W($"x{scale}: {ms,4}ms — {ok}/{reading.Rows.Count} resolved" +
               (reading.IsValid ? "" : "  [READING REJECTED]"));
@@ -173,6 +190,10 @@ internal static class UpscaleProbe
                 W($"        {(r.Resolved ? "OK  " : "??  ")}{r.OcrText}   ->  {r.Rumour?.Id ?? "-"}");
         }
 
-        W("\ndone — probe.log written next to the exe");
+        W($"\nbest: x{best.scale} with {best.resolved} rumours resolved");
+        return best.resolved <= 0
+            ? "The probe could not resolve a single rumour at any magnification. Send probe.log — this is the "
+              + "reading we need to see."
+            : $"Best at x{best.scale}: {best.resolved} rumours resolved. Details in probe.log.";
     }
 }

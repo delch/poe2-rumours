@@ -69,6 +69,7 @@ internal sealed class App : ApplicationContext
         menu.Items.Add(_screenshotMode);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Open log", null, (_, _) => OpenLog());
+        menu.Items.Add("Diagnose OCR…", null, (_, _) => RunProbe());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Settings…", null, (_, _) => ShowSettings());
         menu.Items.Add("Exit", null, (_, _) => Exit());
@@ -86,6 +87,34 @@ internal sealed class App : ApplicationContext
     }
 
     private readonly ToolStripMenuItem _screenshotMode;
+
+    // Reads the panel at every magnification and reports which one the OCR engine actually does best at. The
+    // right factor is a property of the MACHINE — how tall the game's text is in pixels there — so it can only
+    // be answered on the machine that is misbehaving, by the person sitting at it. Hence a menu item: nobody
+    // is going to open a terminal and type --probe.
+    private void RunProbe()
+    {
+        // The scan loop is hammering the same OCR engine on a timer; two full passes at once just makes both
+        // slow and the numbers meaningless.
+        bool wasPaused = _loop.Paused;
+        _loop.Paused = true;
+        try
+        {
+            var verdict = UpscaleProbe.Run(_config.Language);
+            Log($"probe: {verdict}");
+            MessageBox.Show($"{verdict}\n\n{UpscaleProbe.LogPath}", "PoE Rumours — OCR probe",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            Process.Start(new ProcessStartInfo(UpscaleProbe.LogPath) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "PoE Rumours — OCR probe", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            _loop.Paused = wasPaused;
+        }
+    }
 
     // The log is the whole bug report. Asking someone to paste a path into Explorer is asking them not to send
     // it — so the app opens it for them.
